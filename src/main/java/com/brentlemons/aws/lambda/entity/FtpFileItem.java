@@ -4,6 +4,7 @@
 package com.brentlemons.aws.lambda.entity;
 
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBHashKey;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBMarshaller;
@@ -30,12 +31,13 @@ public class FtpFileItem {
     
 	private String fileName;
     private String serviceName;
+    private FtpRequest ftpRequest;
 	
     static public class ZonedDateTimeConverter implements DynamoDBMarshaller<ZonedDateTime> {
 
         @Override
         public String marshall(ZonedDateTime time) {
-            return time.toString();
+            return time.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
         }
 
         @Override

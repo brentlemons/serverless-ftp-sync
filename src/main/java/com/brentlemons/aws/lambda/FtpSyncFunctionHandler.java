@@ -125,7 +125,7 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 			
             ftp.enterLocalPassiveMode();
             
-            this.doConcurrent(ftp.listFiles(ftpRequest.getPath()), context, this.mapper, ftpRequest.getServiceName(), ftpRequest.getFilterExpression());
+            this.doConcurrent(ftp.listFiles(ftpRequest.getPath()), context, this.mapper, ftpRequest);
 
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
@@ -147,17 +147,17 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
         return "Hello from Brent!";
     }
 
-    public Object doConcurrent(final FTPFile[] files, Context context, DynamoDBMapper mapper, String serviceName, String filterExpression) throws InterruptedException {
+    public Object doConcurrent(final FTPFile[] files, Context context, DynamoDBMapper mapper, FtpRequest ftpRequest) throws InterruptedException {
   	  context.getLogger().log("hello!");
   	  
     	final Collection<Callable<Result>> workers = new ArrayList<>();
         List<FTPFile> result = Arrays.stream(files).collect(Collectors.toList()).stream()
-                .filter(s -> s.getName().matches(filterExpression))
+                .filter(s -> s.getName().matches(ftpRequest.getFilterExpression()))
                 .collect(Collectors.toList());
 
 		
 		for (FTPFile f : result) {
-			workers.add(new Task(f, serviceName, mapper));
+			workers.add(new Task(f, ftpRequest, mapper));
 		}
 
 			      final List<Future<Result>> jobs = ES.invokeAll(workers);
@@ -178,27 +178,28 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 	   private final class Task implements Callable<Result>
 	   {
 	      private final FTPFile data;
-	      private final String serviceName;
+	      private final FtpRequest ftpRequest;
 	      private final DynamoDBMapper mapper;
 
-	      Task(final FTPFile data, final String serviceName, final DynamoDBMapper mapper) {
+	      Task(final FTPFile data, final FtpRequest ftpRequest, final DynamoDBMapper mapper) {
 	         super();
 	         this.data = data;
-	         this.serviceName = serviceName;
+	         this.ftpRequest = ftpRequest;
 	         this.mapper = mapper;
 	      }
 
 	      @Override
 	      public Result call() throws Exception {
 	    	  FtpFileItem item = new FtpFileItem();
-	    	  item.setFileKey(this.serviceName + ":" + this.data.getName());
+	    	  item.setFileKey(this.ftpRequest.getServiceName() + ":" + this.data.getName());
 	    	  item.setFileName(this.data.getName());
 	    	  item.setFileDate(ZonedDateTime.ofInstant(this.data.getTimestamp().toInstant(), ZoneId.of("UTC")));
-	    	  item.setServiceName(this.serviceName);
+	    	  item.setServiceName(this.ftpRequest.getServiceName());
+	    	  item.setFtpRequest(ftpRequest);
 
 	    	  this.mapper.save(item, saveExpression);
 	      	  
-	      	  return new Result(0, serviceName);
+	      	  return new Result(0, this.ftpRequest.getServiceName());
 	      }
 	   }
 	   

@@ -3,6 +3,8 @@
  */
 package com.brentlemons.aws.lambda.entity;
 
+import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBDocument;
+
 import lombok.Data;
 
 /**
@@ -10,6 +12,7 @@ import lombok.Data;
  *
  */
 @Data
+@DynamoDBDocument
 public class FtpRequest {
 	
 	private String serviceName;
