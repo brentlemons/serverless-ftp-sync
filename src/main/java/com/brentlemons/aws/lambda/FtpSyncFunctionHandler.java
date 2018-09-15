@@ -37,10 +37,11 @@ import com.amazonaws.services.dynamodbv2.model.PutItemRequest;
 import com.amazonaws.services.dynamodbv2.model.PutItemResult;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
+import com.brentlemons.aws.lambda.entity.FtpRequest;
 
 import lombok.Data;
 
-public class FtpSyncFunctionHandler implements RequestHandler<Object, String> {
+public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String> {
 	
 	final FTPClient ftp;
 	
@@ -61,19 +62,24 @@ public class FtpSyncFunctionHandler implements RequestHandler<Object, String> {
 	}
 
     @Override
-    public String handleRequest(Object input, Context context) {
+    public String handleRequest(FtpRequest ftpRequest, Context context) {
 		this.ES = Executors.newFixedThreadPool(100);
-        context.getLogger().log("Input: " + input);
+        context.getLogger().log("Input: " + ftpRequest);
         
-        String server = "tgftp.nws.noaa.gov";
+//        String server = "tgftp.nws.noaa.gov";
 //        String server = "ftp.ncep.noaa.gov";
-        String remote = "/SL.us008001/DF.an/DC.sflnd/DS.metar/";
+        String remte = ftpRequest.getPath();
+//        String remote = "/SL.us008001/DF.an/DC.sflnd/DS.metar/";
 //        String remote = "/pub/data/nccf/com/rap/prod/rap.20180911";
         
         try {
             int reply;
-			ftp.connect(server);
-			context.getLogger().log("Connected to " + server);// + " on " + (port>0 ? port : ftp.getDefaultPort()));
+            if (ftpRequest.getPort() == null)
+            	ftp.connect(ftpRequest.getHost(), ftp.getDefaultPort());
+            else
+            	ftp.connect(ftpRequest.getHost(), ftpRequest.getPort());
+            	
+            context.getLogger().log("Connected to " + ftpRequest.getHost() + " on port " + (ftpRequest.getPort()!=null ? ftpRequest.getPort() : ftp.getDefaultPort()));
 
             // After connection attempt, you should check the reply code to verify
             // success.
@@ -103,7 +109,7 @@ public class FtpSyncFunctionHandler implements RequestHandler<Object, String> {
 		}
         
         try {
-			if (!ftp.login("anonymous", "brent@home.com"))
+			if (!ftp.login(ftpRequest.getUsername(), ftpRequest.getPassword()))
 			{
 			    ftp.logout();
 			}
@@ -111,14 +117,7 @@ public class FtpSyncFunctionHandler implements RequestHandler<Object, String> {
 			
             ftp.enterLocalPassiveMode();
             
-            this.doConcurrent(ftp.listFiles(remote), context);
-
-//                for (FTPFile f : ftp.listFiles(remote)) {
-////                	context.getLogger().log(f.getName());//.getRawListing());
-//                    ZonedDateTime zdt = ZonedDateTime.ofInstant(f.getTimestamp().toInstant(), ZoneId.of("UTC"));
-////                    context.getLogger().log(zdt.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
-//                }
-
+            this.doConcurrent(ftp.listFiles(ftpRequest.getPath()), context, ftpRequest.getFilterExpression());
 
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
@@ -140,25 +139,21 @@ public class FtpSyncFunctionHandler implements RequestHandler<Object, String> {
         return "Hello from Brent!";
     }
 
-    public List<Result> doConcurrent(final FTPFile[] files, Context context) throws InterruptedException {
+    public Object doConcurrent(final FTPFile[] files, Context context, String filterExpression) throws InterruptedException {
   	  context.getLogger().log("hello!");
   	  
     	final Collection<Callable<Future<PutItemResult>>> workers = new ArrayList<>();
-		int ii = 0;
         List<FTPFile> result = Arrays.stream(files).collect(Collectors.toList()).stream()
-                .filter(s -> s.getName().matches("sn\\.[0-9]{4}\\.txt$"))
-//                .filter(s -> s.getName().matches("rap\\.t[0-9]{2}z\\.awp130pgrbf[0-9]{2}\\.grib2$"))
+                .filter(s -> s.getName().matches(filterExpression))
                 .collect(Collectors.toList());
 
 		
 		for (FTPFile f : result) {
-			workers.add(new Task(ii++, f, context));
+			workers.add(new Task(f));
 		}
 
 			      final List<Future<Future<PutItemResult>>> jobs = ES.invokeAll(workers);
 			      awaitTerminationAfterShutdown(ES);
-//			      final FeatureCollection features = new FeatureCollection();
-			      List<Result> results = new ArrayList<Result>();
 			      for (final Future<Future<PutItemResult>> future : jobs) {
 			         try {
 						final PutItemResult r = future.get().get();
@@ -168,31 +163,21 @@ public class FtpSyncFunctionHandler implements RequestHandler<Object, String> {
 						// TODO Auto-generated catch block
 			        	 context.getLogger().log("already there 1!");
 					}
-//			         context.getLogger().log("-> " + r.getNdx());
-//			         results.add(future.get());
-//			         MultiPolygon path = (MultiPolygon)r.path.getGeometry();
-//			         if (path.getCoordinates().size() > 0)
-//			        	 features.add(r.path);
 			      }
-			      return results;
+			      return null;
 			   }
 
 	   private final class Task implements Callable<Future<PutItemResult>>
 	   {
-	      private final int ndx;
 	      private final FTPFile data;
-	      private final Context context;
 
-	      Task(final int ndx, final FTPFile data, final Context context) {
+	      Task(final FTPFile data) {
 	         super();
-	         this.ndx = ndx;
 	         this.data = data;
-	         this.context = context;
 	      }
 
 	      @Override
 	      public Future<PutItemResult> call() throws Exception {
-//	    	  context.getLogger().log("index: " + ndx + " | file: " + data.getName());
 	      	  Map<String, AttributeValue> item = new HashMap<String,AttributeValue>();
 	      	  item.put("serviceName", new AttributeValue().withS("brent"));
 	    	  ZonedDateTime zdt = ZonedDateTime.ofInstant(data.getTimestamp().toInstant(), ZoneId.of("UTC"));
@@ -200,22 +185,14 @@ public class FtpSyncFunctionHandler implements RequestHandler<Object, String> {
 	      			  data.getName() + ":" +
 	      			  zdt.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
 	      	  item.put("hashString", new AttributeValue().withS(hashString));
-//	      	  item.put("fileHash", new AttributeValue().withN(String.valueOf(hashString.hashCode())));
 	      	  item.put("fileDate", new AttributeValue().withS(zdt.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)));
 	      	  item.put("fileName", new AttributeValue().withS(data.getName()));
 	      	  
 	      	  PutItemRequest putItemRequest = new PutItemRequest(
 	      			  "ftpFileList", item);
-//	      	attribute_not_exists(a) and attribute_not_exists(b)
-//	      	  putItemRequest.withConditionExpression("attribute_not_exists(serviceName) and attribute_not_exists(fileHash)");
 	      	  putItemRequest.withConditionExpression("attribute_not_exists(fileName)");
 	      	  
 	      	  return ddb.putItemAsync(putItemRequest);
-	      	
-
-	    	  //            ZonedDateTime zdt = ZonedDateTime.ofInstant(f.getTimestamp().toInstant(), ZoneId.of("UTC"));
-////          context.getLogger().log(zdt.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
-//	         return new Result(ndx, data.getName());
 	      }
 	   }
 	   public void awaitTerminationAfterShutdown(ExecutorService threadPool) {
@@ -229,31 +206,5 @@ public class FtpSyncFunctionHandler implements RequestHandler<Object, String> {
 		        Thread.currentThread().interrupt();
 		    }
 		}
-	   @Data
-	   private static final class Result
-	   {
-	      final int ndx;
-	      final String path;
-	      private transient String str;
-
-
-	      Result(final int ndx, final String path) {
-	         super();
-	         this.ndx = ndx;
-	         this.path = path;
-	      }
-
-	      @Override
-	      public String toString() {
-	         if (str == null) {
-	            str = new StringBuilder("Result{ndx=").append(ndx)
-	                  .append('}')
-	                  .toString();
-	         }
-	         return str;
-	      }
-	   }
-	   
-
     
 }

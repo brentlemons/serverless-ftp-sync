@@ -7,13 +7,14 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.amazonaws.services.lambda.runtime.Context;
+import com.brentlemons.aws.lambda.entity.FtpRequest;
 
 /**
  * A simple test harness for locally invoking your Lambda function handler.
  */
 public class FtpSyncFunctionHandlerTest {
 
-    private static Object input;
+    private static FtpRequest input;
 
     @BeforeClass
     public static void createInput() throws IOException {
