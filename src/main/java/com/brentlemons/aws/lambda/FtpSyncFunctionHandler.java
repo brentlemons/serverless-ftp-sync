@@ -42,7 +42,7 @@ import com.amazonaws.services.dynamodbv2.model.PutItemResult;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.util.ImmutableMapParameter;
-import com.brentlemons.aws.lambda.entity.FtpFileListItem;
+import com.brentlemons.aws.lambda.entity.FtpFileItem;
 import com.brentlemons.aws.lambda.entity.FtpRequest;
 
 import lombok.Data;
@@ -52,7 +52,7 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 	final FTPClient ftp;
 	
 	private ExecutorService ES;
-    final AmazonDynamoDBAsync ddb;
+    final AmazonDynamoDB ddb;
     private DynamoDBSaveExpression saveExpression;
     private DynamoDBMapper mapper;
 
@@ -64,26 +64,11 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 		super();
 		
 		this.ftp = new FTPClient();
-//		AWSCredentials credentials;
-		this.ddb = new AmazonDynamoDBAsyncClient();
+		this.ddb = new AmazonDynamoDBClient();
 		ddb.setRegion(Region.getRegion(Regions.US_WEST_2));
 		
 		this.saveExpression = new DynamoDBSaveExpression().withExpected(ImmutableMapParameter.of("id", new ExpectedAttributeValue(false)));
-		
-		
-		
-//		this.saveExpression = new DynamoDBSaveExpression();
-//	    Map expected = new HashMap();
-//	    expected.put("status", 
-//	    new ExpectedAttributeValue(new AttributeValue("READY").withExists(false));
-//
-//	    saveExpression.setExpected(expected);
-
-//		new DynamoDBSaveExpression().withConditionalOperator("attribute_not_exists(fileName)");
-//		public Statement saveIfNotExist(Statement statement) throws ConditionalCheckFailedException {
-//		    return mapper.save(statement, );
-//		}
-		
+				
 		DynamoDBMapperConfig mapperConfig = new DynamoDBMapperConfig(
 				DynamoDBMapperConfig.SaveBehavior.CLOBBER);
 			        
@@ -94,12 +79,6 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
     @Override
     public String handleRequest(FtpRequest ftpRequest, Context context) {
 		this.ES = Executors.newFixedThreadPool(100);
-        context.getLogger().log("Input: " + ftpRequest);
-        
-//        String server = "tgftp.nws.noaa.gov";
-//        String server = "ftp.ncep.noaa.gov";
-//        String remote = "/SL.us008001/DF.an/DC.sflnd/DS.metar/";
-//        String remote = "/pub/data/nccf/com/rap/prod/rap.20180911";
         
         try {
             int reply;
@@ -146,7 +125,7 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 			
             ftp.enterLocalPassiveMode();
             
-            this.doConcurrent(ftp.listFiles(ftpRequest.getPath()), context, this.mapper, ftpRequest.getFilterExpression());
+            this.doConcurrent(ftp.listFiles(ftpRequest.getPath()), context, this.mapper, ftpRequest.getServiceName(), ftpRequest.getFilterExpression());
 
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
@@ -168,7 +147,7 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
         return "Hello from Brent!";
     }
 
-    public Object doConcurrent(final FTPFile[] files, Context context, DynamoDBMapper mapper, String filterExpression) throws InterruptedException {
+    public Object doConcurrent(final FTPFile[] files, Context context, DynamoDBMapper mapper, String serviceName, String filterExpression) throws InterruptedException {
   	  context.getLogger().log("hello!");
   	  
     	final Collection<Callable<Result>> workers = new ArrayList<>();
@@ -178,7 +157,7 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 
 		
 		for (FTPFile f : result) {
-			workers.add(new Task(f, mapper));
+			workers.add(new Task(f, serviceName, mapper));
 		}
 
 			      final List<Future<Result>> jobs = ES.invokeAll(workers);
@@ -199,24 +178,27 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 	   private final class Task implements Callable<Result>
 	   {
 	      private final FTPFile data;
+	      private final String serviceName;
 	      private final DynamoDBMapper mapper;
 
-	      Task(final FTPFile data, final DynamoDBMapper mapper) {
+	      Task(final FTPFile data, final String serviceName, final DynamoDBMapper mapper) {
 	         super();
 	         this.data = data;
+	         this.serviceName = serviceName;
 	         this.mapper = mapper;
 	      }
 
 	      @Override
 	      public Result call() throws Exception {
-	    	  FtpFileListItem item = new FtpFileListItem();
-	    	  item.setFileName(data.getName());
-	    	  item.setFileDate(ZonedDateTime.ofInstant(data.getTimestamp().toInstant(), ZoneId.of("UTC")));
-	    	  item.setServiceName("brent");
+	    	  FtpFileItem item = new FtpFileItem();
+	    	  item.setFileKey(this.serviceName + ":" + this.data.getName());
+	    	  item.setFileName(this.data.getName());
+	    	  item.setFileDate(ZonedDateTime.ofInstant(this.data.getTimestamp().toInstant(), ZoneId.of("UTC")));
+	    	  item.setServiceName(this.serviceName);
 
 	    	  this.mapper.save(item, saveExpression);
 	      	  
-	      	  return new Result(0, "brent");
+	      	  return new Result(0, serviceName);
 	      }
 	   }
 	   

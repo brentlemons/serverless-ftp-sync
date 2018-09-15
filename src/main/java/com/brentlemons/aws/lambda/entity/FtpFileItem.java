@@ -19,15 +19,16 @@ import lombok.Data;
  */
 @Data
 @DynamoDBTable(tableName = "ftpFileList")
-public class FtpFileListItem {
+public class FtpFileItem {
 	
-    @DynamoDBHashKey(attributeName="fileName")  
-	private String fileName;
+    @DynamoDBHashKey(attributeName="fileKey")  
+	private String fileKey;
     
     @DynamoDBRangeKey(attributeName="fileDate")
     @DynamoDBMarshalling(marshallerClass = ZonedDateTimeConverter.class)
     private ZonedDateTime fileDate;
     
+	private String fileName;
     private String serviceName;
 	
     static public class ZonedDateTimeConverter implements DynamoDBMarshaller<ZonedDateTime> {

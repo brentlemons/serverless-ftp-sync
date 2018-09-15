@@ -12,6 +12,7 @@ import lombok.Data;
 @Data
 public class FtpRequest {
 	
+	private String serviceName;
 	private String host;
 	private Integer port;
 	private String username;
