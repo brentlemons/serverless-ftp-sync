@@ -22,5 +22,6 @@ public class FtpRequest {
 	private String password;
 	private String path;
 	private String filterExpression;
+	private String destinationBucket;
 
 }
