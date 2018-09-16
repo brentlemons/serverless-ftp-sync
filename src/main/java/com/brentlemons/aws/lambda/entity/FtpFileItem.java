@@ -33,16 +33,62 @@ public class FtpFileItem {
     private String serviceName;
     private FtpRequest ftpRequest;
 	
-    static public class ZonedDateTimeConverter implements DynamoDBMarshaller<ZonedDateTime> {
+	/**
+	 * 
+	 */
+	public FtpFileItem() {
+		super();
+	}
+
+	/**
+	 * @param fileKey
+	 * @param fileDate
+	 * @param fileName
+	 * @param serviceName
+	 * @param ftpRequest
+	 */
+	public FtpFileItem(String fileKey, ZonedDateTime fileDate, String fileName, String serviceName,
+			FtpRequest ftpRequest) {
+		super();
+		this.fileKey = fileKey;
+		this.fileDate = fileDate;
+		this.fileName = fileName;
+		this.serviceName = serviceName;
+		this.ftpRequest = ftpRequest;
+	}
+
+	/**
+	 * @param fileDate
+	 * @param fileName
+	 * @param serviceName
+	 * @param ftpRequest
+	 */
+	public FtpFileItem(ZonedDateTime fileDate, String fileName, String serviceName,
+			FtpRequest ftpRequest) {
+		super();
+		this.setFileKey(serviceName, fileName);
+		this.fileDate = fileDate;
+		this.fileName = fileName;
+		this.serviceName = serviceName;
+		this.ftpRequest = ftpRequest;
+	}
+	
+	public void setFileKey(String serviceName, String fileName) {
+		this.fileKey = serviceName + ":" + fileName;
+	}
+
+	static public class ZonedDateTimeConverter implements DynamoDBMarshaller<ZonedDateTime> {
 
         @Override
         public String marshall(ZonedDateTime time) {
             return time.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
         }
 
+        // not using this for now, but if i do, i'll probably want to choose a format
         @Override
         public ZonedDateTime unmarshall(Class<ZonedDateTime> dimensionType, String stringValue) {
             return ZonedDateTime.parse(stringValue);
         }
     }
+
 }

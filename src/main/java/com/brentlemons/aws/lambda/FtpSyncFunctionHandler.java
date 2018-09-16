@@ -1,44 +1,33 @@
 package com.brentlemons.aws.lambda;
 
 import java.io.IOException;
-import java.net.SocketException;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.apache.commons.net.ftp.FTPClient;
 import org.apache.commons.net.ftp.FTPFile;
 import org.apache.commons.net.ftp.FTPReply;
 
-import com.amazonaws.auth.AWSCredentials;
 import com.amazonaws.regions.Region;
 import com.amazonaws.regions.Regions;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDBAsync;
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDBAsyncClient;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBMapper;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBMapperConfig;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBSaveExpression;
-import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.amazonaws.services.dynamodbv2.model.ConditionalCheckFailedException;
 import com.amazonaws.services.dynamodbv2.model.ExpectedAttributeValue;
-import com.amazonaws.services.dynamodbv2.model.PutItemRequest;
-import com.amazonaws.services.dynamodbv2.model.PutItemResult;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.util.ImmutableMapParameter;
@@ -48,14 +37,16 @@ import com.brentlemons.aws.lambda.entity.FtpRequest;
 import lombok.Data;
 
 public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String> {
-	
-	final FTPClient ftp;
-	
-	private ExecutorService ES;
-    final AmazonDynamoDB ddb;
-    private DynamoDBSaveExpression saveExpression;
-    private DynamoDBMapper mapper;
+		
+	private final FTPClient ftp;
+    private final AmazonDynamoDB ddb;
+    private final DynamoDBSaveExpression saveExpression;
+    private final DynamoDBMapper mapper;
 
+	private ExecutorService ES;
+
+    private final static String dynamoHashKey = "fileKey";
+    private final static String dynamoRangeKey = "fileDate";
 
 	/**
 	 * 
@@ -67,7 +58,7 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 		this.ddb = new AmazonDynamoDBClient();
 		ddb.setRegion(Region.getRegion(Regions.US_WEST_2));
 		
-		this.saveExpression = new DynamoDBSaveExpression().withExpected(ImmutableMapParameter.of("id", new ExpectedAttributeValue(false)));
+		this.saveExpression = new DynamoDBSaveExpression().withExpected(ImmutableMapParameter.of(dynamoHashKey, new ExpectedAttributeValue(false)));
 				
 		DynamoDBMapperConfig mapperConfig = new DynamoDBMapperConfig(
 				DynamoDBMapperConfig.SaveBehavior.CLOBBER);
@@ -81,7 +72,6 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 		this.ES = Executors.newFixedThreadPool(100);
         
         try {
-            int reply;
             if (ftpRequest.getPort() == null)
             	ftp.connect(ftpRequest.getHost(), ftp.getDefaultPort());
             else
@@ -91,37 +81,30 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 
             // After connection attempt, you should check the reply code to verify
             // success.
-            reply = ftp.getReplyCode();
-
-            if (!FTPReply.isPositiveCompletion(reply))
-            {
+            if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
                 ftp.disconnect();
                 context.getLogger().log("FTP server refused connection.");
                 System.exit(1);
             }
 		} catch (IOException e) {
-            if (ftp.isConnected())
-            {
-                try
-                {
+            if (ftp.isConnected()) {
+                try {
                     ftp.disconnect();
                 }
-                catch (IOException f)
-                {
+                catch (IOException f) {
                     // do nothing
                 }
             }
             context.getLogger().log("Could not connect to server.");
-            e.printStackTrace();
+            context.getLogger().log(e.getLocalizedMessage());
             System.exit(1);
 		}
         
         try {
-			if (!ftp.login(ftpRequest.getUsername(), ftpRequest.getPassword()))
-			{
+			if (!ftp.login(ftpRequest.getUsername(), ftpRequest.getPassword())) {
 			    ftp.logout();
+	            System.exit(1);
 			}
-			context.getLogger().log("Remote system is " + ftp.getSystemType());
 			
             ftp.enterLocalPassiveMode();
             
@@ -129,115 +112,96 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
-			context.getLogger().log("ioexception");
-			e.printStackTrace();
+			context.getLogger().log(e.getLocalizedMessage());
 		} catch (InterruptedException e) {
 			// TODO Auto-generated catch block
-			context.getLogger().log("interruptedexception");
-			e.printStackTrace();
-//		} catch (ExecutionException e) {
-//			// TODO Auto-generated catch block
-//			context.getLogger().log("executionexception");
-//			e.printStackTrace();
+			context.getLogger().log(e.getLocalizedMessage());
 		}
-
-
 
         // TODO: implement your handler
         return "Hello from Brent!";
     }
 
-    public Object doConcurrent(final FTPFile[] files, Context context, DynamoDBMapper mapper, FtpRequest ftpRequest) throws InterruptedException {
-  	  context.getLogger().log("hello!");
+    public Object doConcurrent(final FTPFile[] ftpFiles, Context context, DynamoDBMapper mapper, FtpRequest ftpRequest) throws InterruptedException {
   	  
     	final Collection<Callable<Result>> workers = new ArrayList<>();
-        List<FTPFile> result = Arrays.stream(files).collect(Collectors.toList()).stream()
+        
+    	List<FTPFile> files = Arrays.stream(ftpFiles).collect(Collectors.toList()).stream()
                 .filter(s -> s.getName().matches(ftpRequest.getFilterExpression()))
                 .collect(Collectors.toList());
-
 		
-		for (FTPFile f : result) {
-			workers.add(new Task(f, ftpRequest, mapper));
+		for (FTPFile file : files) {
+			workers.add(new Task(file, ftpRequest, mapper));
 		}
 
-			      final List<Future<Result>> jobs = ES.invokeAll(workers);
-			      awaitTerminationAfterShutdown(ES);
-			      for (final Future<Result> future : jobs) {
-			         try {
-						final Result r = future.get();
-			         } catch (ConditionalCheckFailedException ex) {
-			        	 context.getLogger().log("already there 0!");
-					} catch (ExecutionException e) {
-						// TODO Auto-generated catch block
-			        	 context.getLogger().log(e.getMessage());
-					}
-			      }
-			      return null;
-			   }
+		final List<Future<Result>> jobs = ES.invokeAll(workers);
+		
+		awaitTerminationAfterShutdown(ES);
+		
+		for (final Future<Result> future : jobs) {
+			try {
+				final Result result = future.get();
+			} catch (ConditionalCheckFailedException e) {
+				context.getLogger().log(e.getLocalizedMessage());
+			} catch (ExecutionException e) {
+				context.getLogger().log(e.getLocalizedMessage());
+			}
+		}
+		return null;
+	}
 
-	   private final class Task implements Callable<Result>
-	   {
-	      private final FTPFile data;
-	      private final FtpRequest ftpRequest;
-	      private final DynamoDBMapper mapper;
+	private final class Task implements Callable<Result> {
 
-	      Task(final FTPFile data, final FtpRequest ftpRequest, final DynamoDBMapper mapper) {
-	         super();
-	         this.data = data;
-	         this.ftpRequest = ftpRequest;
-	         this.mapper = mapper;
-	      }
+		private final FTPFile data;
+		private final FtpRequest ftpRequest;
+		private final DynamoDBMapper mapper;
 
-	      @Override
-	      public Result call() throws Exception {
-	    	  FtpFileItem item = new FtpFileItem();
-	    	  item.setFileKey(this.ftpRequest.getServiceName() + ":" + this.data.getName());
-	    	  item.setFileName(this.data.getName());
-	    	  item.setFileDate(ZonedDateTime.ofInstant(this.data.getTimestamp().toInstant(), ZoneId.of("UTC")));
-	    	  item.setServiceName(this.ftpRequest.getServiceName());
-	    	  item.setFtpRequest(ftpRequest);
+		Task(final FTPFile data, final FtpRequest ftpRequest, final DynamoDBMapper mapper) {
+			super();
+			this.data = data;
+			this.ftpRequest = ftpRequest;
+			this.mapper = mapper;
+		}
 
-	    	  this.mapper.save(item, saveExpression);
+		@Override
+		public Result call() throws Exception {
+			FtpFileItem item = new FtpFileItem(
+					ZonedDateTime.ofInstant(this.data.getTimestamp().toInstant(), ZoneId.of("UTC")),
+					this.data.getName(),
+					this.ftpRequest.getServiceName(),
+					ftpRequest);
+
+			this.mapper.save(item, saveExpression);
 	      	  
-	      	  return new Result(0, this.ftpRequest.getServiceName());
-	      }
-	   }
-	   
-	   public void awaitTerminationAfterShutdown(ExecutorService threadPool) {
-		    threadPool.shutdown();
-		    try {
-		        if (!threadPool.awaitTermination(60, TimeUnit.SECONDS)) {
-		            threadPool.shutdownNow();
-		        }
-		    } catch (InterruptedException ex) {
-		        threadPool.shutdownNow();
-		        Thread.currentThread().interrupt();
-		    }
+			return new Result(item.getFileKey(), item.getFileDate());
 		}
+	}
 	   
-	   @Data
-	   private static final class Result
-	   {
-	      final int ndx;
- 	      final String path;
- 	      private transient String str;
+	public void awaitTerminationAfterShutdown(ExecutorService threadPool) {
+		
+		threadPool.shutdown();
+		
+		try {
+			if (!threadPool.awaitTermination(60, TimeUnit.SECONDS))
+				threadPool.shutdownNow();
+		} catch (InterruptedException ex) {
+			threadPool.shutdownNow();
+			Thread.currentThread().interrupt();
+		}
+	}
+	   
+	@Data
+	private static final class Result {
+
+		final String fileKey;
+		final ZonedDateTime fileDate;
  
+		Result(final String fileKey, final ZonedDateTime fileDate) {
+			super();
+			this.fileKey = fileKey;
+			this.fileDate = fileDate;
+		}
  
- 	      Result(final int ndx, final String path) {
- 	         super();
- 	         this.ndx = ndx;
- 	         this.path = path;
- 	      }
- 
- 	      @Override
- 	      public String toString() {
- 	         if (str == null) {
- 	            str = new StringBuilder("Result{ndx=").append(ndx)
- 	                  .append('}')
- 	                  .toString();
- 	         }
- 	         return str;
- 	      }
- 	   }
+	}
     
 }
