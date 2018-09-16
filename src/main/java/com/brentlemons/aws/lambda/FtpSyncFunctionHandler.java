@@ -3,6 +3,7 @@ package com.brentlemons.aws.lambda;
 import java.io.IOException;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -141,8 +142,10 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 		for (final Future<Result> future : jobs) {
 			try {
 				final Result result = future.get();
+				context.getLogger().log("INSERTED: " + result.getFileKey() + " | " + result.getFileDate().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
 			} catch (ConditionalCheckFailedException e) {
-				context.getLogger().log(e.getLocalizedMessage());
+				// this is thrown if the record already exists and we told it not to allow insert on existing items
+//				context.getLogger().log(e.getLocalizedMessage());
 			} catch (ExecutionException e) {
 				context.getLogger().log(e.getLocalizedMessage());
 			}
