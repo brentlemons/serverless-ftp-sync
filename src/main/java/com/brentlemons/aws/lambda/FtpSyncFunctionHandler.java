@@ -70,6 +70,8 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 
     @Override
     public String handleRequest(FtpRequest ftpRequest, Context context) {
+    	context.getLogger().log("Checking " + ftpRequest.getServiceName());
+    	
 		this.ES = Executors.newFixedThreadPool(100);
         
         try {
@@ -147,7 +149,7 @@ public class FtpSyncFunctionHandler implements RequestHandler<FtpRequest, String
 				// this is thrown if the record already exists and we told it not to allow insert on existing items
 //				context.getLogger().log(e.getLocalizedMessage());
 			} catch (ExecutionException e) {
-				context.getLogger().log(e.getLocalizedMessage());
+//				context.getLogger().log(e.getLocalizedMessage());
 			}
 		}
 		return null;
